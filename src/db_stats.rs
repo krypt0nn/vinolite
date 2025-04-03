@@ -22,25 +22,27 @@ pub struct Index {
     pub size: u64
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Format {
     Integer,
     Numeric,
     Real,
     Boolean,
     Text,
-    Blob
+    Blob,
+    Other(String)
 }
 
 impl std::fmt::Display for Format {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Integer => f.write_str("integer"),
-            Self::Numeric => f.write_str("numeric"),
-            Self::Real    => f.write_str("real"),
-            Self::Boolean => f.write_str("boolean"),
-            Self::Text    => f.write_str("text"),
-            Self::Blob    => f.write_str("blob")
+            Self::Integer  => f.write_str("integer"),
+            Self::Numeric  => f.write_str("numeric"),
+            Self::Real     => f.write_str("real"),
+            Self::Boolean  => f.write_str("boolean"),
+            Self::Text     => f.write_str("text"),
+            Self::Blob     => f.write_str("blob"),
+            Self::Other(s) => f.write_str(s)
         }
     }
 }
@@ -57,7 +59,7 @@ impl FromStr for Format {
             (Self::Numeric, vec!["numeric", "date"]),
             (Self::Real,    vec!["real", "float", "double", "decimal"]),
             (Self::Boolean, vec!["boolean"]),
-            (Self::Text,    vec!["text", "char", "varchar", "varying character", "nchar", "native character", "nvarchar", "clob", "timestamp"]),
+            (Self::Text,    vec!["text", "char", "varchar", "varying character", "nchar", "native character", "nvarchar", "longvarchar", "clob", "timestamp"]),
             (Self::Blob,    vec!["blob"])
         ];
 
@@ -69,7 +71,7 @@ impl FromStr for Format {
             }
         }
 
-        anyhow::bail!("Invalid column data type: {format}")
+        Ok(Self::Other(format))
     }
 }
 
@@ -95,7 +97,7 @@ pub fn query_structure(connection: &rusqlite::Connection) -> anyhow::Result<Vec<
     let mut tables = Vec::with_capacity(tables_raw.len());
 
     for (table, size) in tables_raw.drain(..) {
-        let rows = connection.prepare(&format!("SELECT COUNT(rowid) AS rows FROM `{table}`"))?
+        let rows = connection.prepare(&format!("SELECT COUNT(*) AS rows FROM `{table}`"))?
             .query_row([], |row| row.get::<_, u64>("rows"))?;
 
         let mut query = connection.prepare(&format!("SELECT name, type FROM pragma_table_info('{table}')"))?;
@@ -147,12 +149,13 @@ pub fn query_structure(connection: &rusqlite::Connection) -> anyhow::Result<Vec<
                 GROUP BY sqlite_schema.name;
             "))?;
 
-            let size = query.query_row([], |row| row.get::<_, u64>("size"))?;
-
-            indexes.push(Index {
-                name: index,
-                size
-            });
+            // Some indexes can be empty.
+            if let Ok(size) = query.query_row([], |row| row.get::<_, u64>("size")) {
+                indexes.push(Index {
+                    name: index,
+                    size
+                });
+            }
         }
 
         indexes.sort_by(|a, b| b.size.cmp(&a.size));
