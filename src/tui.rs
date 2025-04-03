@@ -85,8 +85,9 @@ pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, database: rusqlite:
 
                     let bars_per_page = top_area.width as usize / 6;
 
-                    // TODO shift window following selected_table
-                    for i in 0..bars_per_page {
+                    let page = view.selected_table / bars_per_page;
+
+                    for i in page * bars_per_page..(page + 1) * bars_per_page {
                         let [bar_area, _, remaining_top_area] = Layout::horizontal([
                             Constraint::Length(5),
                             Constraint::Length(1),
