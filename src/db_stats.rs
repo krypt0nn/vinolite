@@ -127,6 +127,8 @@ pub fn query_structure(connection: &rusqlite::Connection) -> anyhow::Result<Vec<
             });
         }
 
+        columns.sort_by(|a, b| b.length.cmp(&a.length));
+
         let mut query = connection.prepare(&format!("SELECT name FROM pragma_index_list('{table}')"))?;
 
         let mut indexes_raw = query.query_map([], |row| row.get::<_, String>("name"))?
@@ -153,6 +155,8 @@ pub fn query_structure(connection: &rusqlite::Connection) -> anyhow::Result<Vec<
             });
         }
 
+        indexes.sort_by(|a, b| b.size.cmp(&a.size));
+
         tables.push(Table {
             name: table,
             size,
@@ -161,6 +165,8 @@ pub fn query_structure(connection: &rusqlite::Connection) -> anyhow::Result<Vec<
             indexes
         });
     }
+
+    tables.sort_by(|a, b| b.size.cmp(&a.size));
 
     Ok(tables)
 }

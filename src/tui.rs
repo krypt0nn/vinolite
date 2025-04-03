@@ -6,6 +6,19 @@ use ratatui::crossterm::event::{self, Event, KeyCode};
 
 use super::db_stats::Table;
 
+fn format_bytes(mut bytes: f64) -> String {
+    for suffix in ["B", "KB", "MB", "GB"] {
+        // This is intended, e.g. to have `0.98 KB` instead of `1000 B`.
+        if bytes < 1000.0 {
+            return format!("{bytes:.2} {suffix}");
+        }
+
+        bytes /= 1024.0;
+    }
+
+    format!("{bytes:.2} TB")
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
     TablesChart,
@@ -28,10 +41,10 @@ impl View<'_> {
 
 pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, tables: &[Table]) -> anyhow::Result<()> {
     fn table_size(table: &Table) -> f64 {
-        (table.size / 1024 + table.indexes.iter().map(|index| index.size / 1024).sum::<u64>()) as f64
+        (table.size + table.indexes.iter().map(|index| index.size).sum::<u64>()) as f64
     }
 
-    let total_table_size = tables.iter().map(table_size).sum::<f64>();
+    let total_tables_size = tables.iter().map(table_size).sum::<f64>();
 
     let mut view = View {
         page: Page::TablesChart,
@@ -47,7 +60,10 @@ pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, tables: &[Table]) -
             ]).areas(frame.area());
 
             frame.render_widget(Line::from_iter([
-                Span::from("Q").fg(Color::Red), Span::from("uit")
+                Span::from("Q").fg(Color::Red), Span::from("uit "),
+                Span::from("←→").fg(Color::Red), Span::from(" Select table "),
+                Span::from("↑↓").fg(Color::Red), Span::from(" Table details "),
+                Span::from("Enter").fg(Color::Red), Span::from(" Switch page ")
             ]), footer_area);
 
             match view.page {
@@ -75,8 +91,8 @@ pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, tables: &[Table]) -
 
                         let table_size = table_size(table);
 
-                        let real_table_fraction = table_size / total_table_size;
-                        let norm_table_fraction = table_size.log2() / total_table_size.log2();
+                        let real_table_fraction = table_size / total_tables_size;
+                        let norm_table_fraction = table_size.log2() / total_tables_size.log2();
 
                         let table_ratio = (norm_table_fraction * u32::MAX as f64) as u32;
 
@@ -106,7 +122,7 @@ pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, tables: &[Table]) -
 
                         let [index_bar_area, table_bar_area] = Layout::vertical([
                             Constraint::Fill(1),
-                            Constraint::Ratio(((table.size / 1024) as f64 / table_size * u32::MAX as f64) as u32, u32::MAX)
+                            Constraint::Ratio((table.size as f64 / table_size * u32::MAX as f64) as u32, u32::MAX)
                         ]).areas(inner_bar_area);
 
                         let index_size_bar = Block::new().bg(Color::Yellow);
@@ -116,9 +132,11 @@ pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, tables: &[Table]) -
                         frame.render_widget(table_size_bar, table_bar_area);
                     }
 
+                    let table_fraction = table_size(view.table()) / total_tables_size;
+
                     let bottom_widget = Paragraph::new(Text::from_iter([
-                        format!("Table size  : {} bytes", view.table().size),
-                        format!("Indexes size: {} bytes", view.table().indexes.iter().map(|index| index.size).sum::<u64>()),
+                        format!("Table size  : {} ({:.2}% of total)", format_bytes(view.table().size as f64), table_fraction * 100.0),
+                        format!("Indexes size: {}", format_bytes(view.table().indexes.iter().map(|index| index.size as f64).sum::<f64>())),
                         format!("Rows        : {}", view.table().rows)
                     ]));
 
@@ -134,11 +152,102 @@ pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, tables: &[Table]) -
                     let table_borders_widget = Block::bordered()
                         .title_top(format!("Table `{}`", view.table().name));
 
-                    // let table_details_area = table_borders_widget.inner(area);
+                    let table_details_area = table_borders_widget.inner(area);
 
                     frame.render_widget(table_borders_widget, area);
 
+                    let total_columns_size = view.table().columns.iter()
+                        .map(|column| column.length as f64)
+                        .sum::<f64>();
 
+                    let (table_columns, sizes) = view.table().columns.iter()
+                        .map(|column| {
+                            let norm_column_fraction = (column.length as f64).log2() / total_columns_size.log2();
+
+                            let name = column.name.as_str();
+                            let format = column.format.to_string();
+                            let size = format_bytes(column.length as f64);
+                            let fraction = format!("{:.2}%", column.length as f64 / total_columns_size * 100.0);
+
+                            let sizes = (name.len(), format.len(), size.len(), fraction.len());
+
+                            let row = (
+                                Line::from(name),
+                                Line::from(format),
+                                Line::from(size),
+                                Line::from(fraction),
+                                norm_column_fraction
+                            );
+
+                            (row, sizes)
+                        })
+                        .collect::<(Vec<_>, Vec<_>)>();
+
+                    let sizes = sizes.into_iter().fold((4, 4, 9, 8), |acc, sizes| (
+                        acc.0.max(sizes.0),
+                        acc.1.max(sizes.1),
+                        acc.2.max(sizes.2),
+                        acc.3.max(sizes.2)
+                    ));
+
+                    let [table_columns_area, area] = Layout::vertical([
+                        Constraint::Length(view.table().columns.len() as u16 + 3),
+                        Constraint::Fill(1)
+                    ]).areas(table_details_area);
+
+                    let table_columns_block_widget = Block::bordered().title_top("Columns");
+
+                    let table_columns_inner_area = table_columns_block_widget.inner(table_columns_area);
+
+                    frame.render_widget(Block::bordered().title_top("Columns"), table_columns_area);
+
+                    let [table_columns_row_area, mut table_columns_inner_area] = Layout::vertical([
+                        Constraint::Length(1),
+                        Constraint::Fill(1)
+                    ]).areas(table_columns_inner_area);
+
+                    let [name_area, type_area, size_area, fraction_area, bar_area] = Layout::horizontal([
+                        Constraint::Length(sizes.0 as u16 + 2),
+                        Constraint::Length(sizes.1 as u16 + 2),
+                        Constraint::Length(sizes.2 as u16 + 2),
+                        Constraint::Length(sizes.3 as u16 + 2),
+                        Constraint::Fill(1)
+                    ]).areas(table_columns_row_area);
+
+                    frame.render_widget(Span::from("Name").underlined(), name_area);
+                    frame.render_widget(Span::from("Type").underlined(), type_area);
+                    frame.render_widget(Span::from("Disk size").underlined(), size_area);
+                    frame.render_widget(Span::from("Fraction").underlined(), fraction_area);
+                    frame.render_widget(Span::from("Bar").underlined(), bar_area);
+
+                    for (name_widget, type_widget, size_widget, fraction_widget, norm_column_fraction) in table_columns {
+                        let [table_columns_row_area, remaining_table_columns_inner_area] = Layout::vertical([
+                            Constraint::Length(1),
+                            Constraint::Fill(1)
+                        ]).areas(table_columns_inner_area);
+
+                        table_columns_inner_area = remaining_table_columns_inner_area;
+
+                        let [name_area, type_area, size_area, fraction_area, bar_area] = Layout::horizontal([
+                            Constraint::Length(sizes.0 as u16 + 2),
+                            Constraint::Length(sizes.1 as u16 + 2),
+                            Constraint::Length(sizes.2 as u16 + 2),
+                            Constraint::Length(sizes.3 as u16 + 2),
+                            Constraint::Fill(1)
+                        ]).areas(table_columns_row_area);
+
+                        frame.render_widget(name_widget, name_area);
+                        frame.render_widget(type_widget, type_area);
+                        frame.render_widget(size_widget, size_area);
+                        frame.render_widget(fraction_widget, fraction_area);
+
+                        let [bar_area, _] = Layout::horizontal([
+                            Constraint::Ratio((norm_column_fraction * u32::MAX as f64) as u32, u32::MAX),
+                            Constraint::Fill(1)
+                        ]).areas(bar_area);
+
+                        frame.render_widget(Block::new().bg(Color::Blue), bar_area);
+                    }
                 }
             }
         })?;
@@ -172,6 +281,13 @@ pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, tables: &[Table]) -
                         KeyCode::Down => {
                             if view.page == Page::TablesChart {
                                 view.page = Page::TableDetails;
+                            }
+                        }
+
+                        KeyCode::Enter => {
+                            view.page = match view.page {
+                                Page::TablesChart  => Page::TableDetails,
+                                Page::TableDetails => Page::TablesChart
                             }
                         }
 
