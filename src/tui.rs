@@ -449,11 +449,14 @@ pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, database: rusqlite:
                 #[allow(clippy::single_match)]
                 match event::read()? {
                     Event::Key(key) => match key.code {
-                        KeyCode::Char('q') if view.page == Page::VacuumQuestion => view.page = Page::TablesChart,
+                        KeyCode::Char('q') | KeyCode::Char('Q') |
+                        KeyCode::Char('й') | KeyCode::Char('Й') if view.page == Page::VacuumQuestion => view.page = Page::TablesChart,
 
-                        KeyCode::Char('q') => return Ok(()),
+                        KeyCode::Char('q') | KeyCode::Char('Q') |
+                        KeyCode::Char('й') | KeyCode::Char('Й') => return Ok(()),
 
-                        KeyCode::Char('v') => view.page = Page::VacuumQuestion,
+                        KeyCode::Char('v') | KeyCode::Char('V') |
+                        KeyCode::Char('м') | KeyCode::Char('М') => view.page = Page::VacuumQuestion,
 
                         KeyCode::Enter if view.page == Page::VacuumQuestion => view.page = Page::VacuumProgress,
 
