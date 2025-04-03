@@ -445,7 +445,7 @@ pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, database: rusqlite:
                 break;
             }
 
-            if event::poll(std::time::Duration::from_secs(1))? {
+            if event::poll(std::time::Duration::new(u64::MAX, 0))? {
                 #[allow(clippy::single_match)]
                 match event::read()? {
                     Event::Key(key) => match key.code {
