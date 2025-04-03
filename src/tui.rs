@@ -156,6 +156,8 @@ pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, tables: &[Table]) -
 
                     frame.render_widget(table_borders_widget, area);
 
+                    // ===================== Columns table =====================
+
                     let total_columns_size = view.table().columns.iter()
                         .map(|column| column.length as f64)
                         .sum::<f64>();
@@ -247,6 +249,94 @@ pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, tables: &[Table]) -
                         ]).areas(bar_area);
 
                         frame.render_widget(Block::new().bg(Color::Blue), bar_area);
+                    }
+
+                    // ===================== Indexes table =====================
+
+                    let total_indexes_size = view.table().indexes.iter()
+                        .map(|index| index.size as f64)
+                        .sum::<f64>();
+
+                    let (table_indexes, sizes) = view.table().indexes.iter()
+                        .map(|index| {
+                            let norm_index_fraction = (index.size as f64).log2() / total_indexes_size.log2();
+
+                            let name = index.name.as_str();
+                            let size = format_bytes(index.size as f64);
+                            let fraction = format!("{:.2}%", index.size as f64 / total_indexes_size * 100.0);
+
+                            let sizes = (name.len(), size.len(), fraction.len());
+
+                            let row = (
+                                Line::from(name),
+                                Line::from(size),
+                                Line::from(fraction),
+                                norm_index_fraction
+                            );
+
+                            (row, sizes)
+                        })
+                        .collect::<(Vec<_>, Vec<_>)>();
+
+                    let sizes = sizes.into_iter().fold((4, 9, 8), |acc, sizes| (
+                        acc.0.max(sizes.0),
+                        acc.1.max(sizes.1),
+                        acc.2.max(sizes.2)
+                    ));
+
+                    let [table_indexes_area, _] = Layout::vertical([
+                        Constraint::Length(view.table().indexes.len() as u16 + 3),
+                        Constraint::Fill(1)
+                    ]).areas(area);
+
+                    let table_indexes_block_widget = Block::bordered().title_top("Columns");
+
+                    let table_indexes_inner_area = table_indexes_block_widget.inner(table_indexes_area);
+
+                    frame.render_widget(Block::bordered().title_top("Indexes"), table_indexes_area);
+
+                    let [table_indexes_row_area, mut table_indexes_inner_area] = Layout::vertical([
+                        Constraint::Length(1),
+                        Constraint::Fill(1)
+                    ]).areas(table_indexes_inner_area);
+
+                    let [name_area, size_area, fraction_area, bar_area] = Layout::horizontal([
+                        Constraint::Length(sizes.0 as u16 + 2),
+                        Constraint::Length(sizes.1 as u16 + 2),
+                        Constraint::Length(sizes.2 as u16 + 2),
+                        Constraint::Fill(1)
+                    ]).areas(table_indexes_row_area);
+
+                    frame.render_widget(Span::from("Name").underlined(), name_area);
+                    frame.render_widget(Span::from("Disk size").underlined(), size_area);
+                    frame.render_widget(Span::from("Fraction").underlined(), fraction_area);
+                    frame.render_widget(Span::from("Bar").underlined(), bar_area);
+
+                    for (name_widget, size_widget, fraction_widget, norm_index_fraction) in table_indexes {
+                        let [table_indexes_row_area, remaining_table_indexes_inner_area] = Layout::vertical([
+                            Constraint::Length(1),
+                            Constraint::Fill(1)
+                        ]).areas(table_indexes_inner_area);
+
+                        table_indexes_inner_area = remaining_table_indexes_inner_area;
+
+                        let [name_area, size_area, fraction_area, bar_area] = Layout::horizontal([
+                            Constraint::Length(sizes.0 as u16 + 2),
+                            Constraint::Length(sizes.1 as u16 + 2),
+                            Constraint::Length(sizes.2 as u16 + 2),
+                            Constraint::Fill(1)
+                        ]).areas(table_indexes_row_area);
+
+                        frame.render_widget(name_widget, name_area);
+                        frame.render_widget(size_widget, size_area);
+                        frame.render_widget(fraction_widget, fraction_area);
+
+                        let [bar_area, _] = Layout::horizontal([
+                            Constraint::Ratio((norm_index_fraction * u32::MAX as f64) as u32, u32::MAX),
+                            Constraint::Fill(1)
+                        ]).areas(bar_area);
+
+                        frame.render_widget(Block::new().bg(Color::Yellow), bar_area);
                     }
                 }
             }
