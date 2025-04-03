@@ -1,6 +1,7 @@
 [package]
 name = "vinolite"
-version = "0.1.0"
+version = "1.0.0"
+description = "SQLite database space usage viewer"
 authors = ["Nikita Podvirnyi <krypt0nn@vk.com>"]
 homepage = "https://github.com/krypt0nn/vinolite"
 repository = "https://github.com/krypt0nn/vinolite"

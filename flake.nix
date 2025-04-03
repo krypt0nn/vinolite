@@ -40,8 +40,6 @@
                     src = ./.;
                     cargoLock.lockFile = ./Cargo.lock;
 
-                    doCheck = false;
-
                     meta = with pkgs.lib; {
                         description = config.package.description;
                         homepage = config.package.homepage;
