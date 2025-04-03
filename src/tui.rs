@@ -116,19 +116,35 @@ pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, database: rusqlite:
                             bar_area.height = 4;
                         }
 
-                        let style = if view.selected_table == i {
-                            Style::reset().fg(Color::Green)
+                        let (borders, style) = if view.selected_table == i {
+                            (Borders::all(), Style::reset().green())
                         } else {
-                            Style::reset()
+                            (Borders::BOTTOM, Style::reset())
                         };
 
                         let bar_widget = Block::bordered()
+                            .borders(borders)
                             .border_style(style)
                             .title_bottom(format!("{}%", (real_table_fraction * 100.0).round()));
 
-                        let inner_bar_area = bar_widget.inner(bar_area);
+                        let mut inner_bar_area = bar_widget.inner(bar_area);
 
                         frame.render_widget(bar_widget, bar_area);
+
+                        if view.selected_table != i {
+                            let [_, updated_inner_bar_area, _] = Layout::horizontal([
+                                Constraint::Length(1),
+                                Constraint::Length(3),
+                                Constraint::Length(1)
+                            ]).areas(inner_bar_area);
+
+                            let [_, updated_inner_bar_area] = Layout::vertical([
+                                Constraint::Length(1),
+                                Constraint::Fill(1)
+                            ]).areas(updated_inner_bar_area);
+
+                            inner_bar_area = updated_inner_bar_area;
+                        }
 
                         let [index_bar_area, table_bar_area] = Layout::vertical([
                             Constraint::Fill(1),
