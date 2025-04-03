@@ -1,4 +1,7 @@
 use std::io::Stdout;
+use std::sync::Arc;
+
+use spin::Mutex;
 
 use ratatui::prelude::*;
 use ratatui::widgets::*;
@@ -19,51 +22,58 @@ fn format_bytes(mut bytes: f64) -> String {
     format!("{bytes:.2} TB")
 }
 
+fn table_size(table: &Table) -> f64 {
+    (table.size + table.indexes.iter().map(|index| index.size).sum::<u64>()) as f64
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
     TablesChart,
-    TableDetails
+    TableDetails,
+    VacuumQuestion,
+    VacuumProgress
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct View<'tables> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct View {
     pub page: Page,
-    pub tables: &'tables [Table],
+    pub tables: Vec<Table>,
     pub selected_table: usize
 }
 
-impl View<'_> {
+impl View {
     #[inline]
-    pub const fn table(&self) -> &'_ Table {
+    pub fn table(&self) -> &Table {
         &self.tables[self.selected_table]
     }
 }
 
-pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, tables: &[Table]) -> anyhow::Result<()> {
-    fn table_size(table: &Table) -> f64 {
-        (table.size + table.indexes.iter().map(|index| index.size).sum::<u64>()) as f64
-    }
-
-    let total_tables_size = tables.iter().map(table_size).sum::<f64>();
-
-    let mut view = View {
+pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, database: rusqlite::Connection) -> anyhow::Result<()> {
+    let view = Arc::new(Mutex::new(View {
         page: Page::TablesChart,
-        tables,
+        tables: super::db_stats::query_structure(&database)?,
         selected_table: 0
-    };
+    }));
+
+    let total_tables_size = view.lock().tables.iter().map(table_size).sum::<f64>();
 
     loop {
+        let view_copy = view.clone();
+
         terminal.draw(move |frame| {
+            let view = view_copy.lock();
+
             let [area, footer_area] = Layout::vertical([
                 Constraint::Fill(1),
                 Constraint::Length(1)
             ]).areas(frame.area());
 
             frame.render_widget(Line::from_iter([
-                Span::from("Q").fg(Color::Red), Span::from("uit "),
-                Span::from("←→").fg(Color::Red), Span::from(" Select table "),
-                Span::from("↑↓").fg(Color::Red), Span::from(" Table details "),
-                Span::from("Enter").fg(Color::Red), Span::from(" Switch page ")
+                Span::from("Q").red(), Span::from("uit "),
+                Span::from("V").red(), Span::from("acuum "),
+                Span::from("←→").red(), Span::from(" Select table "),
+                Span::from("↑↓").red(), Span::from(" Table details "),
+                Span::from("Enter").red(), Span::from(" Switch page ")
             ]), footer_area);
 
             match view.page {
@@ -85,7 +95,7 @@ pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, tables: &[Table]) -
 
                         top_area = remaining_top_area;
 
-                        let Some(table) = tables.get(i) else {
+                        let Some(table) = view.tables.get(i) else {
                             break;
                         };
 
@@ -125,8 +135,8 @@ pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, tables: &[Table]) -
                             Constraint::Ratio((table.size as f64 / table_size * u32::MAX as f64) as u32, u32::MAX)
                         ]).areas(inner_bar_area);
 
-                        let index_size_bar = Block::new().bg(Color::Yellow);
-                        let table_size_bar = Block::new().bg(Color::Blue);
+                        let index_size_bar = Block::new().on_yellow();
+                        let table_size_bar = Block::new().on_blue();
 
                         frame.render_widget(index_size_bar, index_bar_area);
                         frame.render_widget(table_size_bar, table_bar_area);
@@ -248,7 +258,7 @@ pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, tables: &[Table]) -
                             Constraint::Fill(1)
                         ]).areas(bar_area);
 
-                        frame.render_widget(Block::new().bg(Color::Blue), bar_area);
+                        frame.render_widget(Block::new().on_blue(), bar_area);
                     }
 
                     // ===================== Indexes table =====================
@@ -336,18 +346,89 @@ pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, tables: &[Table]) -
                             Constraint::Fill(1)
                         ]).areas(bar_area);
 
-                        frame.render_widget(Block::new().bg(Color::Yellow), bar_area);
+                        frame.render_widget(Block::new().on_yellow(), bar_area);
                     }
+                }
+
+                Page::VacuumQuestion => {
+                    let [_, message_area, _] = Layout::vertical([
+                        Constraint::Fill(1),
+                        Constraint::Length(11),
+                        Constraint::Fill(1)
+                    ]).areas(area);
+
+                    frame.render_widget(Block::new().on_yellow(), message_area);
+
+                    let [_, message_area, _] = Layout::horizontal([
+                        Constraint::Fill(1),
+                        Constraint::Length(40),
+                        Constraint::Fill(1)
+                    ]).areas(message_area);
+
+                    frame.render_widget(Text::from_iter([
+                        Line::from(""),
+                        Line::from("Vacuum database").bold(),
+                        Line::from(""),
+                        Line::from("Rebuild the database file, repacking it"),
+                        Line::from("into a minimal amount of disk space."),
+                        Line::from(""),
+                        Line::from("This operation can take some time."),
+                        Line::from("Make a backup prior that."),
+                        Line::from(""),
+                        Line::from("Press enter to continue.").bold(),
+                        Line::from("")
+                    ]), message_area);
+                }
+
+                Page::VacuumProgress => {
+                    let [_, message_area, _] = Layout::vertical([
+                        Constraint::Fill(1),
+                        Constraint::Length(5),
+                        Constraint::Fill(1)
+                    ]).areas(area);
+
+                    frame.render_widget(Block::new().on_yellow(), message_area);
+
+                    let [_, message_area, _] = Layout::horizontal([
+                        Constraint::Fill(1),
+                        Constraint::Length(40),
+                        Constraint::Fill(1)
+                    ]).areas(message_area);
+
+                    frame.render_widget(Text::from_iter([
+                        Line::from(""),
+                        Line::from("Database rebuilding is in progress").bold(),
+                        Line::from(""),
+                        Line::from("This operation may take some time."),
+                        Line::from("")
+                    ]), message_area);
                 }
             }
         })?;
 
         loop {
+            let mut view = view.lock();
+
+            if view.page == Page::VacuumProgress {
+                database.execute("VACUUM", [])?;
+
+                view.page = Page::TablesChart;
+                view.tables = super::db_stats::query_structure(&database)?;
+
+                break;
+            }
+
             if event::poll(std::time::Duration::from_secs(1))? {
                 #[allow(clippy::single_match)]
                 match event::read()? {
                     Event::Key(key) => match key.code {
+                        KeyCode::Char('q') if view.page == Page::VacuumQuestion => view.page = Page::TablesChart,
+
                         KeyCode::Char('q') => return Ok(()),
+
+                        KeyCode::Char('v') => view.page = Page::VacuumQuestion,
+
+                        KeyCode::Enter if view.page == Page::VacuumQuestion => view.page = Page::VacuumProgress,
 
                         KeyCode::Left => {
                             #[allow(clippy::implicit_saturating_sub)]
@@ -375,9 +456,11 @@ pub fn run(mut terminal: Terminal<CrosstermBackend<Stdout>>, tables: &[Table]) -
                         }
 
                         KeyCode::Enter => {
-                            view.page = match view.page {
-                                Page::TablesChart  => Page::TableDetails,
-                                Page::TableDetails => Page::TablesChart
+                            match view.page {
+                                Page::TablesChart  => view.page = Page::TableDetails,
+                                Page::TableDetails => view.page = Page::TablesChart,
+
+                                _ => ()
                             }
                         }
 

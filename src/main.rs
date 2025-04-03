@@ -32,13 +32,11 @@ fn main() -> anyhow::Result<()> {
 
     let database = rusqlite::Connection::open(path)?;
 
-    let tables = db_stats::query_structure(&database)?;
-
     let terminal = ratatui::init();
 
-    tui::run(terminal, &tables)?;
+    let result = tui::run(terminal, database);
 
     ratatui::restore();
 
-    Ok(())
+    result
 }

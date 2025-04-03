@@ -14,5 +14,6 @@ lto = "fat"
 
 [dependencies]
 anyhow = "1.0"
+spin = "0.10"
 ratatui = "0.29"
 rusqlite = { version = "0.34", features = ["bundled"] }
